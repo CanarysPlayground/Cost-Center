@@ -32,7 +32,7 @@ jobs:
           GITHUB_TEAM_SLUG: ${{ secrets.TEAM_SLUG }}
           GITHUB_COST_CENTER_ID: ${{ secrets.COST_CENTER_ID }}
           GITHUB_TOKEN: ${{ secrets.TOKEN }}
-          OUTPUT_CSV: synced_users.csv
+          # OUTPUT_CSV: synced_users.csv
         run: |
           python sync_team_to_cost_center.py
 
