@@ -27,11 +27,11 @@ jobs:
 
       - name: Run sync
         env:
-          GITHUB_API_BASE: ${{ secrets.GITHUB_API_BASE }} # optional; can omit if using api.github.com
-          GITHUB_ENTERPRISE: ${{ secrets.GITHUB_ENTERPRISE }}
-          GITHUB_TEAM_SLUG: ${{ secrets.GITHUB_TEAM_SLUG }}
-          GITHUB_COST_CENTER_ID: ${{ secrets.GITHUB_COST_CENTER_ID }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_API_BASE: ${{ secrets.GITHUB_API_BASE }} # optional; can omit if using api.github.com
+          GITHUB_ENTERPRISE: ${{ secrets.ENTERPRISE }}
+          GITHUB_TEAM_SLUG: ${{ secrets.TEAM_SLUG }}
+          GITHUB_COST_CENTER_ID: ${{ secrets.COST_CENTER_ID }}
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
           OUTPUT_CSV: synced_users.csv
         run: |
           python sync_team_to_cost_center.py
