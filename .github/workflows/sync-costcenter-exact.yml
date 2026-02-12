@@ -1,0 +1,44 @@
+name: Sync Enterprise Team to Cost Center (Exact)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *" # daily at 02:00 UTC
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv
+
+      - name: Run exact sync (add and remove users)
+        env:
+          GITHUB_ENTERPRISE: ${{ secrets.ENTERPRISE }}
+          GITHUB_TEAM_SLUG: ${{ secrets.TEAM_SLUG }}
+          GITHUB_COST_CENTER_ID: ${{ secrets.COST_CENTER_ID }}
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+          OUTPUT_CSV: sync_report.csv
+        run: |
+          python sync_team_cost_center_exact.py
+
+      - name: Upload sync report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync-report
+          path: sync_report.csv
+          retention-days: 30
