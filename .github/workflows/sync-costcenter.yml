@@ -1,4 +1,4 @@
-name: Sync Enterprise Team Members to Cost Center
+name: Sync_EntTeam_Cost_Center
 
 on:
   workflow_dispatch:
