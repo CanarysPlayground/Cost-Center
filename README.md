@@ -103,7 +103,7 @@ COST_CENTER_ID = "cost_center_id"
 
 ## Syncing Enterprise Teams to Cost Centers (`new_sync.py`)
 
-The `new_sync.py` script (run automatically by the GitHub Actions workflow) syncs one or more enterprise teams to their corresponding cost centers.
+The `new_sync.py` script (run automatically by the GitHub Actions workflow) syncs one or more user sources to their corresponding cost centers.
 
 > **Important – GitHub exclusive membership:** A user can only belong to **one** cost center at a time. Adding a user to a new cost center automatically removes them from their previous one. The multi-mapping mode accounts for this.
 
@@ -120,27 +120,66 @@ Set the following repository secrets and run the workflow as before:
 
 ### Multi-cost-center mode (recommended for overlapping memberships)
 
-When users are members of multiple teams and need to be split across cost centers (e.g. 3 users from `MarchCC` belong to `PR1`), use the `COST_CENTER_MAPPINGS` secret instead of `TEAM_SLUG` / `COST_CENTER_ID`.
+Use the `COST_CENTER_MAPPINGS` secret (a JSON array) instead of `TEAM_SLUG` / `COST_CENTER_ID`.  
+Each entry maps a **user source** to a cost center and must contain:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `cost_center_id` | **Always** | UUID of the cost center to populate |
+| `team_slug` | *One of* | Enterprise team slug – members are fetched from the GitHub API |
+| `users` | *One of* | Explicit list of GitHub login names – **no enterprise team needed** |
+
+> You must provide either `team_slug` **or** `users` (not both, but at least one).
 
 **How it works:**
 1. Mappings are processed **in order**.
 2. Once a user is assigned to a cost center, they are **skipped** for all subsequent mappings — preventing GitHub's exclusive-membership behaviour from moving them back.
 3. List higher-priority cost centers **first** (e.g. `PR1` before `MarchCC`).
 
-#### Example scenario
+---
 
-- `MarchCC` has 8 users.  
-- 3 of those users should be in `PR1` (budget $50) and must **not** consume MarchCC budget.  
-- The remaining 5 stay in `MarchCC` (budget $0).
+#### Scenario: PR1 ($50 budget) + MarchCC ($0 budget), no PR1 enterprise team
 
-**Step 1 – Create two enterprise teams:**
+- `MarchCC` has 8 users (managed via the `march-team` enterprise team).
+- 3 of those users should be in `PR1` (budget $50 for additional premium requests).
+- The remaining 5 stay in `MarchCC` (budget $0 — no additional premium requests).
+- **You do not need to create a PR1 enterprise team.**
 
-| Team | Members |
-|------|---------|
-| `pr1-team` | The 3 users that belong to PR1 |
-| `march-team` | All 8 users (or just the 5 remaining ones) |
+**Step 1 – Create the two cost centers** in GitHub (Billing and licensing → Cost centers):
 
-**Step 2 – Set the `COST_CENTER_MAPPINGS` secret** (in *Settings → Secrets and variables → Actions*):
+| Cost center | Budget |
+|-------------|--------|
+| `PR1` | $50 |
+| `MarchCC` | $0 |
+
+**Step 2 – Set the `COST_CENTER_MAPPINGS` secret** (Settings → Secrets and variables → Actions):
+
+```json
+[
+  {
+    "users":          ["user1", "user2", "user3"],
+    "cost_center_id": "<PR1-cost-center-uuid>"
+  },
+  {
+    "team_slug":      "march-team",
+    "cost_center_id": "<MarchCC-cost-center-uuid>"
+  }
+]
+```
+
+Replace `user1`, `user2`, `user3` with the actual GitHub logins of the 3 users who should receive premium requests, and replace the UUIDs with the IDs shown in the cost center URL on GitHub.
+
+Because `PR1` is listed first, those 3 users are claimed by PR1 and will **not** be re-added to MarchCC when the `march-team` mapping runs.
+
+**Step 3 – Leave `TEAM_SLUG` and `COST_CENTER_ID` secrets empty** (or remove them). When `COST_CENTER_MAPPINGS` is set it takes priority.
+
+**Step 4 – Run the workflow** (`Actions → Sync_EntTeam_Cost_Center → Run workflow`).
+
+---
+
+#### If you still prefer team-based mappings for all entries
+
+You can also use `team_slug` for every entry (requires an enterprise team per cost center):
 
 ```json
 [
@@ -149,11 +188,7 @@ When users are members of multiple teams and need to be split across cost center
 ]
 ```
 
-Because `PR1` is listed first, those 3 users are claimed by PR1 and will **not** be re-added to MarchCC when the `march-team` mapping runs.
-
-**Step 3 – Leave `TEAM_SLUG` and `COST_CENTER_ID` secrets empty** (or remove them). When `COST_CENTER_MAPPINGS` is set it takes priority.
-
-**Step 4 – Run the workflow** (`Actions → Sync_EntTeam_Cost_Center → Run workflow`).
+---
 
 #### Dry-run
 
@@ -165,4 +200,4 @@ DRY_RUN=true COST_CENTER_MAPPINGS='[...]' python new_sync.py
 
 #### Report artifact
 
-After each run the workflow uploads `synced_users.csv` as an artifact. The CSV now includes `team` and `cost_center` columns so you can see exactly which mapping each user was processed under.
+After each run the workflow uploads `synced_users.csv` as an artifact. The CSV includes `source` (team slug or `(direct)`) and `cost_center` columns so you can see exactly which mapping each user was processed under.

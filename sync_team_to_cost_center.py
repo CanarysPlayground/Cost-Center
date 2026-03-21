@@ -164,10 +164,16 @@ def main():
         if not isinstance(mappings, list) or len(mappings) == 0:
             raise SystemExit("COST_CENTER_MAPPINGS must be a non-empty JSON array.")
         for i, m in enumerate(mappings):
-            if not m.get("team_slug") or not m.get("cost_center_id"):
+            if not m.get("cost_center_id"):
                 raise SystemExit(
-                    f"COST_CENTER_MAPPINGS entry #{i} is missing 'team_slug' or "
-                    f"'cost_center_id': {m}"
+                    f"COST_CENTER_MAPPINGS entry #{i} is missing 'cost_center_id': {m}"
+                )
+            has_team = bool(m.get("team_slug"))
+            has_users = isinstance(m.get("users"), list) and len(m["users"]) > 0
+            if not has_team and not has_users:
+                raise SystemExit(
+                    f"COST_CENTER_MAPPINGS entry #{i} must have either 'team_slug' "
+                    f"or 'users' (non-empty list of logins): {m}"
                 )
     else:
         # Backward-compatible single-mapping mode
@@ -198,13 +204,27 @@ def main():
     claimed_users: set[str] = set()
 
     for mapping in mappings:
-        team_slug = mapping["team_slug"]
         cost_center_id = mapping["cost_center_id"]
+        team_slug = mapping.get("team_slug")
+        direct_users: list[str] = mapping.get("users", [])
 
-        print(f"\n=== Syncing team '{team_slug}' -> cost center '{cost_center_id}' ===")
-
-        members = fetch_enterprise_team_member_logins(base, enterprise, team_slug, token)
-        print(f"Total unique team members fetched: {len(members)}")
+        if team_slug:
+            source_label = f"team '{team_slug}'"
+            print(f"\n=== Syncing {source_label} -> cost center '{cost_center_id}' ===")
+            members = fetch_enterprise_team_member_logins(base, enterprise, team_slug, token)
+            print(f"Total unique team members fetched: {len(members)}")
+        else:
+            # Direct user list — no enterprise team required.
+            # De-dup while preserving order.
+            seen: set[str] = set()
+            members = []
+            for u in direct_users:
+                if u not in seen:
+                    seen.add(u)
+                    members.append(u)
+            source_label = f"direct user list ({len(members)} users)"
+            print(f"\n=== Syncing {source_label} -> cost center '{cost_center_id}' ===")
+            print(f"[USERS] {members}")
 
         # Skip users already claimed by an earlier (higher-priority) cost center.
         members_to_sync = [login for login in members if login not in claimed_users]
@@ -223,7 +243,7 @@ def main():
             print(msg)
             all_results.append({
                 "login": login,
-                "team": team_slug,
+                "source": team_slug or "(direct)",
                 "cost_center": cost_center_id,
                 "result": "added" if ok else "skipped",
                 "message": msg,
@@ -241,7 +261,7 @@ def main():
 
     # write a small report CSV as an artifact in Actions
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["login", "team", "cost_center", "result", "message"])
+        w = csv.DictWriter(f, fieldnames=["login", "source", "cost_center", "result", "message"])
         w.writeheader()
         w.writerows(all_results)
 

@@ -33,20 +33,31 @@ jobs:
           # ---------------------------------------------------------------------------
           # Multi-cost-center mode (recommended when you have overlapping team members)
           #
-          # Set the COST_CENTER_MAPPINGS secret to a JSON array where each entry maps
-          # an enterprise team to the cost center it should populate.  Entries are
-          # processed in order – users claimed by an earlier entry are NOT added to
-          # later ones, so list higher-priority cost centers first.
+          # Set the COST_CENTER_MAPPINGS secret to a JSON array.  Each entry maps a
+          # user source to a cost center.  Entries are processed in order – users
+          # claimed by an earlier entry are NOT added to later ones, so list
+          # higher-priority cost centers first.
           #
-          # Example value for secret COST_CENTER_MAPPINGS:
+          # Each entry must have 'cost_center_id' plus ONE of:
+          #   • "team_slug" – resolve members from an enterprise team (API call)
+          #   • "users"     – explicit list of GitHub logins (no team required)
+          #
+          # Example: PR1 gets 3 specific users (no enterprise team needed);
+          #          MarchCC gets the rest via its enterprise team.
+          #
           #   [
-          #     {"team_slug": "pr1-team",   "cost_center_id": "<PR1-uuid>"},
-          #     {"team_slug": "march-team", "cost_center_id": "<MarchCC-uuid>"}
+          #     {
+          #       "users":          ["user1", "user2", "user3"],
+          #       "cost_center_id": "<PR1-uuid>"
+          #     },
+          #     {
+          #       "team_slug":      "march-team",
+          #       "cost_center_id": "<MarchCC-uuid>"
+          #     }
           #   ]
           #
-          # Because GitHub cost centers have exclusive membership (a user can only
-          # belong to one cost center at a time), placing PR1 first ensures its 3
-          # users stay in PR1 and are not re-assigned to MarchCC.
+          # Because PR1 is listed first, its 3 users are claimed and will NOT be
+          # re-assigned to MarchCC when the march-team mapping runs.
           COST_CENTER_MAPPINGS: ${{ secrets.COST_CENTER_MAPPINGS }}
           # ---------------------------------------------------------------------------
           # Single cost-center mode (backward-compatible; used when COST_CENTER_MAPPINGS

@@ -244,10 +244,16 @@ def main():
         if not isinstance(mappings, list) or len(mappings) == 0:
             raise SystemExit("COST_CENTER_MAPPINGS must be a non-empty JSON array.")
         for i, m in enumerate(mappings):
-            if not m.get("team_slug") or not m.get("cost_center_id"):
+            if not m.get("cost_center_id"):
                 raise SystemExit(
-                    f"COST_CENTER_MAPPINGS entry #{i} is missing 'team_slug' or "
-                    f"'cost_center_id': {m}"
+                    f"COST_CENTER_MAPPINGS entry #{i} is missing 'cost_center_id': {m}"
+                )
+            has_team = bool(m.get("team_slug"))
+            has_users = isinstance(m.get("users"), list) and len(m["users"]) > 0
+            if not has_team and not has_users:
+                raise SystemExit(
+                    f"COST_CENTER_MAPPINGS entry #{i} must have either 'team_slug' "
+                    f"or 'users' (non-empty list of logins): {m}"
                 )
     else:
         # Backward-compatible single-mapping mode
@@ -278,14 +284,29 @@ def main():
     claimed_users: set[str] = set()
 
     for mapping in mappings:
-        team_slug = mapping["team_slug"]
         cost_center_id = mapping["cost_center_id"]
+        team_slug = mapping.get("team_slug")
+        direct_users: list[str] = mapping.get("users", [])
 
-        print(f"\n=== Syncing team '{team_slug}' -> cost center '{cost_center_id}' ===")
+        if team_slug:
+            source_label = f"team '{team_slug}'"
+            print(f"\n=== Syncing {source_label} -> cost center '{cost_center_id}' ===")
 
-        print("\n-- Fetching Enterprise Team Members --")
-        team_members = fetch_enterprise_team_member_logins(base, enterprise, team_slug, token)
-        print(f"[TEAM] total={len(team_members)}")
+            print("\n-- Fetching Enterprise Team Members --")
+            team_members = fetch_enterprise_team_member_logins(base, enterprise, team_slug, token)
+            print(f"[TEAM] total={len(team_members)}")
+        else:
+            # Direct user list — no enterprise team required.
+            # De-dup while preserving order.
+            seen: set[str] = set()
+            team_members = []
+            for u in direct_users:
+                if u not in seen:
+                    seen.add(u)
+                    team_members.append(u)
+            source_label = f"direct user list ({len(team_members)} users)"
+            print(f"\n=== Syncing {source_label} -> cost center '{cost_center_id}' ===")
+            print(f"[USERS] {team_members}")
 
         print("\n-- Fetching Cost Center Users --")
         cost_center_users = fetch_cost_center_users(base, enterprise, cost_center_id, token)
@@ -322,7 +343,7 @@ def main():
                 msg = f"DRY_RUN would add {login}"
                 print(msg)
                 all_results.append({
-                    "login": login, "team": team_slug, "cost_center": cost_center_id,
+                    "login": login, "source": team_slug or "(direct)", "cost_center": cost_center_id,
                     "action": "add", "status": "dry_run", "message": msg,
                 })
                 continue
@@ -330,7 +351,7 @@ def main():
                 ok, msg = add_user_to_cost_center(base, enterprise, cost_center_id, token, login)
                 print(msg)
                 all_results.append({
-                    "login": login, "team": team_slug, "cost_center": cost_center_id,
+                    "login": login, "source": team_slug or "(direct)", "cost_center": cost_center_id,
                     "action": "add", "status": "success" if ok else "skipped", "message": msg,
                 })
                 if ok:
@@ -339,7 +360,7 @@ def main():
                 emsg = f"Error adding {login}: {e}"
                 print(emsg)
                 all_results.append({
-                    "login": login, "team": team_slug, "cost_center": cost_center_id,
+                    "login": login, "source": team_slug or "(direct)", "cost_center": cost_center_id,
                     "action": "add", "status": "error", "message": emsg,
                 })
                 error_count += 1
@@ -350,7 +371,7 @@ def main():
                 msg = f"DRY_RUN would remove {login}"
                 print(msg)
                 all_results.append({
-                    "login": login, "team": team_slug, "cost_center": cost_center_id,
+                    "login": login, "source": team_slug or "(direct)", "cost_center": cost_center_id,
                     "action": "remove", "status": "dry_run", "message": msg,
                 })
                 continue
@@ -358,7 +379,7 @@ def main():
                 ok, msg = remove_user_from_cost_center(base, enterprise, cost_center_id, token, login)
                 print(msg)
                 all_results.append({
-                    "login": login, "team": team_slug, "cost_center": cost_center_id,
+                    "login": login, "source": team_slug or "(direct)", "cost_center": cost_center_id,
                     "action": "remove", "status": "success" if ok else "skipped", "message": msg,
                 })
                 if ok:
@@ -367,14 +388,14 @@ def main():
                 emsg = f"Error removing {login}: {e}"
                 print(emsg)
                 all_results.append({
-                    "login": login, "team": team_slug, "cost_center": cost_center_id,
+                    "login": login, "source": team_slug or "(direct)", "cost_center": cost_center_id,
                     "action": "remove", "status": "error", "message": emsg,
                 })
                 error_count += 1
 
         for login in users_already_synced:
             all_results.append({
-                "login": login, "team": team_slug, "cost_center": cost_center_id,
+                "login": login, "source": team_slug or "(direct)", "cost_center": cost_center_id,
                 "action": "none", "status": "already_synced", "message": "Already in sync",
             })
 
@@ -389,7 +410,7 @@ def main():
         print(f"  Errors: {error_count}")
 
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["login", "team", "cost_center", "action", "status", "message"])
+        w = csv.DictWriter(f, fieldnames=["login", "source", "cost_center", "action", "status", "message"])
         w.writeheader()
         w.writerows(all_results)
 
