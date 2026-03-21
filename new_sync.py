@@ -4,6 +4,25 @@ import json
 import requests
 from dotenv import load_dotenv
 
+# Common Unicode "smart" / curly quote characters that editors and word
+# processors substitute for plain ASCII double-quotes (U+0022).
+_SMART_QUOTE_MAP = str.maketrans({
+    "\u201C": '"',  # LEFT DOUBLE QUOTATION MARK  "
+    "\u201D": '"',  # RIGHT DOUBLE QUOTATION MARK "
+    "\u201E": '"',  # DOUBLE LOW-9 QUOTATION MARK „
+    "\u2018": "'",  # LEFT SINGLE QUOTATION MARK  '
+    "\u2019": "'",  # RIGHT SINGLE QUOTATION MARK '
+    "\uFF02": '"',  # FULLWIDTH QUOTATION MARK ＂
+    "\uFF07": "'",  # FULLWIDTH APOSTROPHE ＇
+})
+
+_COST_CENTER_MAPPINGS_EXAMPLE = (
+    '[\n'
+    '  {"cost_center_id": "<uuid>", "users": ["login1", "login2"]},\n'
+    '  {"cost_center_id": "<uuid>", "team_slug": "team-name"}\n'
+    ']'
+)
+
 
 def github_headers(token: str) -> dict:
     return {
@@ -237,10 +256,31 @@ def main():
     # cost centers that should "claim" shared users FIRST (e.g. PR1 before MarchCC).
     mappings_raw = os.getenv("COST_CENTER_MAPPINGS", "").strip()
     if mappings_raw:
+        # Normalize curly/smart quotes that word processors and some browsers
+        # substitute for plain ASCII double-quotes.  These are invisible in
+        # most UIs but cause json.loads() to fail with "Expecting property
+        # name enclosed in double quotes".
+        normalized = mappings_raw.translate(_SMART_QUOTE_MAP)
+        if normalized != mappings_raw:
+            print(
+                "[WARNING] COST_CENTER_MAPPINGS contained smart/curly quote "
+                "characters that were automatically replaced with plain ASCII "
+                'double-quotes ("). '
+                "Use straight ASCII double-quotes when editing the secret to "
+                "avoid this warning."
+            )
         try:
-            mappings = json.loads(mappings_raw)
+            mappings = json.loads(normalized)
         except json.JSONDecodeError as exc:
-            raise SystemExit(f"Invalid COST_CENTER_MAPPINGS JSON: {exc}")
+            raise SystemExit(
+                f"Invalid COST_CENTER_MAPPINGS JSON: {exc}\n"
+                "Common causes:\n"
+                '  • Smart/curly quotes (\u201c\u201d) instead of plain ASCII double-quotes (")\n'
+                "  • Trailing comma after the last element in an object or array\n"
+                "  • Single quotes (') used instead of double-quotes\n"
+                "  • Unquoted key names\n"
+                f"Expected format:\n{_COST_CENTER_MAPPINGS_EXAMPLE}"
+            )
         if not isinstance(mappings, list) or len(mappings) == 0:
             raise SystemExit("COST_CENTER_MAPPINGS must be a non-empty JSON array.")
         for i, m in enumerate(mappings):
