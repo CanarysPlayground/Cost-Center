@@ -131,6 +131,11 @@ Each entry maps a **user source** to a cost center and must contain:
 
 > You must provide either `team_slug` **or** `users` (not both, but at least one).
 
+> **Important – use plain ASCII double-quotes only.**  
+> When entering the JSON value in the GitHub secrets textarea, always use straight ASCII double-quotes (`"`).  
+> Do **not** use curly/smart quotes (`"` `"`) that word processors and some browser autocorrect features insert automatically.  
+> Smart quotes are invisible in most UIs but cause a JSON parse error (`Expecting property name enclosed in double quotes`).
+
 **How it works:**
 1. Mappings are processed **in order**.
 2. Once a user is assigned to a cost center, they are **skipped** for all subsequent mappings — preventing GitHub's exclusive-membership behaviour from moving them back.
