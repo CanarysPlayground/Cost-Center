@@ -99,4 +99,105 @@ COST_CENTER_ID = "cost_center_id"
     ```
 6. The script will process the CSV and add users to the specified cost center.
 
+---
 
+## Syncing Enterprise Teams to Cost Centers (`new_sync.py`)
+
+The `new_sync.py` script (run automatically by the GitHub Actions workflow) syncs one or more user sources to their corresponding cost centers.
+
+> **Important – GitHub exclusive membership:** A user can only belong to **one** cost center at a time. Adding a user to a new cost center automatically removes them from their previous one. The multi-mapping mode accounts for this.
+
+### Single cost-center mode (backward compatible)
+
+Set the following repository secrets and run the workflow as before:
+
+| Secret | Description |
+|--------|-------------|
+| `ENTERPRISE` | Enterprise slug (e.g. `canarys`) |
+| `TEAM_SLUG` | Enterprise team slug whose members to sync |
+| `COST_CENTER_ID` | UUID of the target cost center |
+| `TOKEN` | Personal access token |
+
+### Multi-cost-center mode (recommended for overlapping memberships)
+
+Use the `COST_CENTER_MAPPINGS` secret (a JSON array) instead of `TEAM_SLUG` / `COST_CENTER_ID`.  
+Each entry maps a **user source** to a cost center and must contain:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `cost_center_id` | **Always** | UUID of the cost center to populate |
+| `team_slug` | *One of* | Enterprise team slug – members are fetched from the GitHub API |
+| `users` | *One of* | Explicit list of GitHub login names – **no enterprise team needed** |
+
+> You must provide either `team_slug` **or** `users` (not both, but at least one).
+
+**How it works:**
+1. Mappings are processed **in order**.
+2. Once a user is assigned to a cost center, they are **skipped** for all subsequent mappings — preventing GitHub's exclusive-membership behaviour from moving them back.
+3. List higher-priority cost centers **first** (e.g. `PR1` before `MarchCC`).
+
+---
+
+#### Scenario: PR1 ($50 budget) + MarchCC ($0 budget), no PR1 enterprise team
+
+- `MarchCC` has 8 users (managed via the `march-team` enterprise team).
+- 3 of those users should be in `PR1` (budget $50 for additional premium requests).
+- The remaining 5 stay in `MarchCC` (budget $0 — no additional premium requests).
+- **You do not need to create a PR1 enterprise team.**
+
+**Step 1 – Create the two cost centers** in GitHub (Billing and licensing → Cost centers):
+
+| Cost center | Budget |
+|-------------|--------|
+| `PR1` | $50 |
+| `MarchCC` | $0 |
+
+**Step 2 – Set the `COST_CENTER_MAPPINGS` secret** (Settings → Secrets and variables → Actions):
+
+```json
+[
+  {
+    "users":          ["user1", "user2", "user3"],
+    "cost_center_id": "<PR1-cost-center-uuid>"
+  },
+  {
+    "team_slug":      "march-team",
+    "cost_center_id": "<MarchCC-cost-center-uuid>"
+  }
+]
+```
+
+Replace `user1`, `user2`, `user3` with the actual GitHub logins of the 3 users who should receive premium requests, and replace the UUIDs with the IDs shown in the cost center URL on GitHub.
+
+Because `PR1` is listed first, those 3 users are claimed by PR1 and will **not** be re-added to MarchCC when the `march-team` mapping runs.
+
+**Step 3 – Leave `TEAM_SLUG` and `COST_CENTER_ID` secrets empty** (or remove them). When `COST_CENTER_MAPPINGS` is set it takes priority.
+
+**Step 4 – Run the workflow** (`Actions → Sync_EntTeam_Cost_Center → Run workflow`).
+
+---
+
+#### If you still prefer team-based mappings for all entries
+
+You can also use `team_slug` for every entry (requires an enterprise team per cost center):
+
+```json
+[
+  {"team_slug": "pr1-team",   "cost_center_id": "<PR1-cost-center-uuid>"},
+  {"team_slug": "march-team", "cost_center_id": "<MarchCC-cost-center-uuid>"}
+]
+```
+
+---
+
+#### Dry-run
+
+To preview changes without applying them, set the `DRY_RUN` environment variable to `true` in the workflow step or locally:
+
+```sh
+DRY_RUN=true COST_CENTER_MAPPINGS='[...]' python new_sync.py
+```
+
+#### Report artifact
+
+After each run the workflow uploads `synced_users.csv` as an artifact. The CSV includes `source` (team slug or `(direct)`) and `cost_center` columns so you can see exactly which mapping each user was processed under.
