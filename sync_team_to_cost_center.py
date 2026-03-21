@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 import requests
 from dotenv import load_dotenv
 
@@ -137,39 +138,114 @@ def main():
 
     base = os.getenv("GITHUB_API_BASE", "https://api.github.com").rstrip("/")
     enterprise = os.getenv("GITHUB_ENTERPRISE")
-    team_slug = os.getenv("GITHUB_TEAM_SLUG")
-    cost_center_id = os.getenv("GITHUB_COST_CENTER_ID")
     token = os.getenv("GITHUB_TOKEN")
 
     output_csv = os.getenv("OUTPUT_CSV", "synced_users.csv")
 
-    missing = [k for k in ("GITHUB_ENTERPRISE", "GITHUB_TEAM_SLUG", "GITHUB_COST_CENTER_ID", "GITHUB_TOKEN") if not os.getenv(k)]
-    if missing:
-        raise SystemExit(f"Missing required env keys: {', '.join(missing)}")
+    # --- Resolve cost center mappings ---
+    # COST_CENTER_MAPPINGS (JSON array) takes priority over the single-mapping env vars.
+    #
+    # Format:
+    #   [
+    #     {"team_slug": "pr1-team",   "cost_center_id": "<PR1-uuid>"},
+    #     {"team_slug": "march-team", "cost_center_id": "<MarchCC-uuid>"}
+    #   ]
+    #
+    # Mappings are processed in order.  A user that has already been assigned to
+    # an earlier cost center is skipped for all subsequent ones, which prevents
+    # GitHub's exclusive-membership behaviour from moving users back.  List the
+    # cost centers that should "claim" shared users FIRST (e.g. PR1 before MarchCC).
+    mappings_raw = os.getenv("COST_CENTER_MAPPINGS", "").strip()
+    if mappings_raw:
+        try:
+            mappings = json.loads(mappings_raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Invalid COST_CENTER_MAPPINGS JSON: {exc}")
+        if not isinstance(mappings, list) or len(mappings) == 0:
+            raise SystemExit("COST_CENTER_MAPPINGS must be a non-empty JSON array.")
+        for i, m in enumerate(mappings):
+            if not m.get("team_slug") or not m.get("cost_center_id"):
+                raise SystemExit(
+                    f"COST_CENTER_MAPPINGS entry #{i} is missing 'team_slug' or "
+                    f"'cost_center_id': {m}"
+                )
+    else:
+        # Backward-compatible single-mapping mode
+        team_slug = os.getenv("GITHUB_TEAM_SLUG")
+        cost_center_id = os.getenv("GITHUB_COST_CENTER_ID")
+        missing = [
+            k for k, v in {
+                "GITHUB_ENTERPRISE": enterprise,
+                "GITHUB_TEAM_SLUG": team_slug,
+                "GITHUB_COST_CENTER_ID": cost_center_id,
+                "GITHUB_TOKEN": token,
+            }.items() if not v
+        ]
+        if missing:
+            raise SystemExit(f"Missing required env keys: {', '.join(missing)}")
+        mappings = [{"team_slug": team_slug, "cost_center_id": cost_center_id}]
 
-    members = fetch_enterprise_team_member_logins(base, enterprise, team_slug, token)
-    print(f"Total unique team members fetched: {len(members)}")
+    missing_global = [
+        k for k, v in {"GITHUB_ENTERPRISE": enterprise, "GITHUB_TOKEN": token}.items() if not v
+    ]
+    if missing_global:
+        raise SystemExit(f"Missing required env keys: {', '.join(missing_global)}")
 
-    results = []
-    added = 0
-    skipped = 0
+    all_results = []
+    # Track users already assigned to a higher-priority cost center so they are
+    # not re-added to a later one.  GitHub cost centers have exclusive membership:
+    # adding a user to a new cost center silently removes them from the old one.
+    claimed_users: set[str] = set()
 
-    for login in members:
-        ok, msg = add_user_to_cost_center(base, enterprise, cost_center_id, token, login)
-        print(msg)
-        results.append({"login": login, "result": "added" if ok else "skipped", "message": msg})
-        if ok:
-            added += 1
-        else:
-            skipped += 1
+    for mapping in mappings:
+        team_slug = mapping["team_slug"]
+        cost_center_id = mapping["cost_center_id"]
+
+        print(f"\n=== Syncing team '{team_slug}' -> cost center '{cost_center_id}' ===")
+
+        members = fetch_enterprise_team_member_logins(base, enterprise, team_slug, token)
+        print(f"Total unique team members fetched: {len(members)}")
+
+        # Skip users already claimed by an earlier (higher-priority) cost center.
+        members_to_sync = [login for login in members if login not in claimed_users]
+        skipped_claimed = len(members) - len(members_to_sync)
+        if skipped_claimed:
+            print(
+                f"[INFO] Skipping {skipped_claimed} user(s) already assigned to a "
+                f"higher-priority cost center."
+            )
+
+        added = 0
+        skipped = 0
+
+        for login in members_to_sync:
+            ok, msg = add_user_to_cost_center(base, enterprise, cost_center_id, token, login)
+            print(msg)
+            all_results.append({
+                "login": login,
+                "team": team_slug,
+                "cost_center": cost_center_id,
+                "result": "added" if ok else "skipped",
+                "message": msg,
+            })
+            if ok:
+                added += 1
+            else:
+                skipped += 1
+
+        # Mark all members of this mapping as claimed so that subsequent mappings
+        # do not attempt to re-assign them to a different cost center.
+        claimed_users.update(members)
+
+        print(f"  added={added}, skipped={skipped}")
 
     # write a small report CSV as an artifact in Actions
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["login", "result", "message"])
+        w = csv.DictWriter(f, fieldnames=["login", "team", "cost_center", "result", "message"])
         w.writeheader()
-        w.writerows(results)
+        w.writerows(all_results)
 
-    print(f"Done. added={added}, skipped={skipped}, report={output_csv}")
+    print(f"Done. report={output_csv}")
 
 
 if __name__ == "__main__":

@@ -99,4 +99,70 @@ COST_CENTER_ID = "cost_center_id"
     ```
 6. The script will process the CSV and add users to the specified cost center.
 
+---
 
+## Syncing Enterprise Teams to Cost Centers (`new_sync.py`)
+
+The `new_sync.py` script (run automatically by the GitHub Actions workflow) syncs one or more enterprise teams to their corresponding cost centers.
+
+> **Important – GitHub exclusive membership:** A user can only belong to **one** cost center at a time. Adding a user to a new cost center automatically removes them from their previous one. The multi-mapping mode accounts for this.
+
+### Single cost-center mode (backward compatible)
+
+Set the following repository secrets and run the workflow as before:
+
+| Secret | Description |
+|--------|-------------|
+| `ENTERPRISE` | Enterprise slug (e.g. `canarys`) |
+| `TEAM_SLUG` | Enterprise team slug whose members to sync |
+| `COST_CENTER_ID` | UUID of the target cost center |
+| `TOKEN` | Personal access token |
+
+### Multi-cost-center mode (recommended for overlapping memberships)
+
+When users are members of multiple teams and need to be split across cost centers (e.g. 3 users from `MarchCC` belong to `PR1`), use the `COST_CENTER_MAPPINGS` secret instead of `TEAM_SLUG` / `COST_CENTER_ID`.
+
+**How it works:**
+1. Mappings are processed **in order**.
+2. Once a user is assigned to a cost center, they are **skipped** for all subsequent mappings — preventing GitHub's exclusive-membership behaviour from moving them back.
+3. List higher-priority cost centers **first** (e.g. `PR1` before `MarchCC`).
+
+#### Example scenario
+
+- `MarchCC` has 8 users.  
+- 3 of those users should be in `PR1` (budget $50) and must **not** consume MarchCC budget.  
+- The remaining 5 stay in `MarchCC` (budget $0).
+
+**Step 1 – Create two enterprise teams:**
+
+| Team | Members |
+|------|---------|
+| `pr1-team` | The 3 users that belong to PR1 |
+| `march-team` | All 8 users (or just the 5 remaining ones) |
+
+**Step 2 – Set the `COST_CENTER_MAPPINGS` secret** (in *Settings → Secrets and variables → Actions*):
+
+```json
+[
+  {"team_slug": "pr1-team",   "cost_center_id": "<PR1-cost-center-uuid>"},
+  {"team_slug": "march-team", "cost_center_id": "<MarchCC-cost-center-uuid>"}
+]
+```
+
+Because `PR1` is listed first, those 3 users are claimed by PR1 and will **not** be re-added to MarchCC when the `march-team` mapping runs.
+
+**Step 3 – Leave `TEAM_SLUG` and `COST_CENTER_ID` secrets empty** (or remove them). When `COST_CENTER_MAPPINGS` is set it takes priority.
+
+**Step 4 – Run the workflow** (`Actions → Sync_EntTeam_Cost_Center → Run workflow`).
+
+#### Dry-run
+
+To preview changes without applying them, set the `DRY_RUN` environment variable to `true` in the workflow step or locally:
+
+```sh
+DRY_RUN=true COST_CENTER_MAPPINGS='[...]' python new_sync.py
+```
+
+#### Report artifact
+
+After each run the workflow uploads `synced_users.csv` as an artifact. The CSV now includes `team` and `cost_center` columns so you can see exactly which mapping each user was processed under.
